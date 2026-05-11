@@ -308,6 +308,27 @@ assert_int_ge() {
     fi
 }
 
+run_alembic_linearity() {
+    local branches
+    local heads_count
+
+    log "Checking Alembic migration linearity"
+
+    # Check for branch points (divergent history)
+    branches=$(docker run --rm "${TARGET_IMAGE}" /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini branches)
+    if [ -n "$branches" ]; then
+        fail "Alembic branch points detected (non-linear migration history)"
+    fi
+
+    # Check for multiple heads (parallel migrations)
+    heads_count=$(docker run --rm "${TARGET_IMAGE}" /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini heads | wc -l)
+    if [ "$heads_count" -gt 1 ]; then
+        fail "Multiple heads detected (expected exactly 1, found ${heads_count})"
+    fi
+
+    log "Alembic migration history is strictly linear (single head, no branches)"
+}
+
 run_sqlite_fresh() {
     local expected_head="$1"
     local port="$2"
@@ -742,6 +763,7 @@ main() {
     log "Base image PostgreSQL driver: ${BASE_IMAGE_PG_DRIVER}"
 
     # Each test gets its own non-overlapping port range (base + 0..999)
+    run_alembic_linearity
     run_sqlite_fresh       "${expected_head}" "$(next_port 22000)"
     run_sqlite_upgrade     "${expected_head}" "$(next_port 23000)"
     run_postgres_fresh     "${expected_head}" "$(next_port 24000)"
