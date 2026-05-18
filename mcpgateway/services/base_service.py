@@ -25,6 +25,7 @@ from sqlalchemy.sql import Select
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.pagination import with_team_visibility_fast_filter
 
 
 class BaseService(ABC):
@@ -165,7 +166,10 @@ class BaseService(ABC):
             ]
             if user_email:
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
-            return query.where(or_(*access_conditions))
+            filtered_query = query.where(or_(*access_conditions))
+            if not hasattr(filtered_query, "execution_options"):
+                return filtered_query
+            return with_team_visibility_fast_filter(filtered_query, model_cls, team_id, user_email)
 
         access_conditions = [model_cls.visibility == "public"]
 

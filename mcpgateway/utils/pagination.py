@@ -46,7 +46,7 @@ from urllib.parse import urlencode
 # Third-Party
 from fastapi import Request
 import orjson
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 
@@ -55,6 +55,21 @@ from mcpgateway.config import settings
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 
 logger = logging.getLogger(__name__)
+
+_TEAM_VISIBILITY_FAST_FILTER = "team_visibility_fast_filter"
+
+
+def with_team_visibility_fast_filter(query: Select, model: Any, team_id: str, user_email: Optional[str]) -> Select:
+    """Attach metadata used by the Postgres team visibility fast path."""
+    return query.execution_options(
+        **{
+            _TEAM_VISIBILITY_FAST_FILTER: {
+                "model": model,
+                "team_id": team_id,
+                "user_email": user_email,
+            }
+        }
+    )
 
 
 def encode_cursor(data: Dict[str, Any]) -> str:
@@ -646,6 +661,72 @@ async def paginate_query(
     )
 
 
+def _team_visibility_filter(query: Select) -> Optional[Dict[str, Any]]:
+    """Return team visibility fast-filter metadata attached by BaseService."""
+    return query.get_execution_options().get(_TEAM_VISIBILITY_FAST_FILTER)
+
+
+def _supports_team_visibility_union(db: Session) -> bool:
+    """Return True when the dialect supports ordered branch UNION fast path."""
+    try:
+        return db.bind.dialect.name == "postgresql"
+    except Exception:
+        return False
+
+
+def _run_team_visibility_union_page(
+    db: Session,
+    query: Select,
+    page_size: int,
+    last_id: Optional[str] = None,
+    last_created: Any = None,
+) -> Tuple[List[Any], Optional[str]]:
+    """Fetch one cursor page with a branch-limited UNION ALL ID subquery."""
+    fast_filter = _team_visibility_filter(query)
+    if not fast_filter:
+        raise ValueError("team visibility fast filter missing")
+
+    model = fast_filter["model"]
+    team_id = fast_filter["team_id"]
+    user_email = fast_filter.get("user_email")
+
+    cursor_filter = None
+    if last_id and last_created:
+        cursor_filter = or_(model.created_at < last_created, and_(model.created_at == last_created, model.id < last_id))
+
+    branch_limit = page_size + 1
+
+    def branch(*branch_criteria: Any) -> Select:
+        """Build one ordered, limited visibility branch."""
+        branch_query = query.with_only_columns(model.id.label("id"), model.created_at.label("created_at"), maintain_column_froms=True).order_by(None).where(*branch_criteria)
+        if cursor_filter is not None:
+            branch_query = branch_query.where(cursor_filter)
+        return branch_query.order_by(model.created_at.desc(), model.id.desc()).limit(branch_limit)
+
+    branches = [
+        branch(model.visibility == "public"),
+        branch(model.team_id == team_id, model.visibility == "team"),
+    ]
+    if user_email:
+        branches.append(branch(model.team_id == team_id, model.owner_email == user_email, model.visibility == "private"))
+
+    id_page = union_all(*branches).order_by(model.created_at.desc(), model.id.desc()).limit(branch_limit).subquery()
+    items = db.execute(query.where(model.id.in_(select(id_page.c.id)))).scalars().all()
+
+    has_more = len(items) > page_size
+    if has_more:
+        items = items[:page_size]
+
+    next_cursor = None
+    if has_more and items:
+        item_created_at = getattr(items[-1], "created_at", None)
+        item_id = getattr(items[-1], "id", None)
+        cursor_data = {"created_at": item_created_at.isoformat() if item_created_at else None, "id": item_id}
+        next_cursor = encode_cursor(cursor_data)
+
+    return items, next_cursor
+
+
 async def unified_paginate(
     db: Session,
     query: Select,
@@ -750,6 +831,10 @@ async def unified_paginate(
                 last_created = datetime.fromisoformat(created_str)
         except (ValueError, TypeError) as e:
             logger.warning(f"Invalid cursor, ignoring: {e}")
+
+    if page_size is not None and _team_visibility_filter(query):
+        if _supports_team_visibility_union(db):
+            return _run_team_visibility_union_page(db, query, page_size, last_id, last_created)
 
     # Apply cursor filter with keyset pagination (assumes query already has ORDER BY)
     if last_id and last_created:
