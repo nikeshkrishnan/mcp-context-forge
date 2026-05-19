@@ -1,26 +1,52 @@
-import { useIntl } from "react-intl";
-import { useAuth } from "../../auth/useAuth";
-import { LanguageSwitcher } from "../ui/LanguageSwitcher";
-import { ThemeToggle } from "../ui/ThemeToggle";
+import { BookOpen } from "lucide-react";
+import { useQuery } from "../../hooks/useQuery";
+import { GitHubIcon } from "../icons/GitHubIcon";
 import { SidebarTrigger } from "../ui/sidebar";
+import { HeaderProfileMenu } from "./HeaderProfileMenu";
+import { HeaderQuickNav } from "./HeaderQuickNav";
+
+const GITHUB_URL = "https://github.com/IBM/mcp-context-forge";
+const DOCS_URL = "https://ibm.github.io/mcp-context-forge/latest/";
+
+interface VersionResponse {
+  app?: {
+    version?: string;
+  };
+}
 
 export function Header() {
-  const intl = useIntl();
-  const { user, logout } = useAuth();
+  const { data: versionData } = useQuery<VersionResponse>("/version?partial=false");
+  const appVersion = versionData?.app?.version;
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4">
       <SidebarTrigger />
-      <div className="flex items-center gap-3">
-        <LanguageSwitcher />
-        <ThemeToggle />
-        {user && <span className="text-sm text-muted-foreground">{user.email}</span>}
-        <button
-          onClick={logout}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+      <div className="flex items-center gap-2">
+        <HeaderQuickNav />
+        {appVersion ? (
+          <span className="hidden text-sm font-medium text-muted-foreground sm:inline">
+            v{appVersion}
+          </span>
+        ) : null}
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="GitHub"
         >
-          {intl.formatMessage({ id: "auth.logout" })}
-        </button>
+          <GitHubIcon className="size-4" aria-hidden="true" />
+        </a>
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Documentation"
+        >
+          <BookOpen className="size-4" aria-hidden="true" />
+        </a>
+        <HeaderProfileMenu />
       </div>
     </header>
   );

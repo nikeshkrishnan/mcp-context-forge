@@ -5,7 +5,6 @@ import { I18nProvider } from "@/i18n";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TeamSwitcher } from "./TeamSwitcher";
 
-// Custom render function that includes SidebarProvider
 function renderTeamSwitcher() {
   return render(
     <I18nProvider>
