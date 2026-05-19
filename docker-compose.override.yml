@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  gateway:
+    # PERMANENT FIX: Force single replica to avoid SQLite sync issues
+    # This ensures only ONE gateway container runs, preventing the
+    # "multiple databases" problem where each container has its own SQLite file
+    deploy:
+      replicas: 1
+    
+    environment:
+      # Override hardcoded values in docker-compose.yml (lines 364-365)
+      # These values come from .env file and will persist across rebuilds
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-demo123}
+      
+      # Password policy disabled for demo
+      - PASSWORD_POLICY_ENABLED=${PASSWORD_POLICY_ENABLED:-false}
+      - PASSWORD_CHANGE_REQUIRED=${PASSWORD_CHANGE_REQUIRED:-false}
+      - FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN=${FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN:-false}
+      
+      # CSRF disabled for easier demo testing
+      - CSRF_ENABLED=${CSRF_ENABLED:-false}
+      
+      # Use SQLite (simpler for demo, but requires single replica)
+      # For production with multiple replicas, use PostgreSQL instead:
+      # - DATABASE_URL=postgresql://mcpgateway:mcpgateway@pgbouncer:6432/mcpgateway
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////tmp/mcp_gateway.db}
+      
+      # Suppress UAID warnings
+      - UAID_ALLOW_ALL_DOMAINS=${UAID_ALLOW_ALL_DOMAINS:-true}
+
+# Made with Bob
